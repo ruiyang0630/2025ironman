@@ -15,6 +15,7 @@ strenum = "^0.4.15"
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.6.4"
 pylint = "^3.2.7"
+ipython = "^8.27.0"
 
 [build-system]
 requires = ["poetry-core"]

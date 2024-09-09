@@ -1,7 +1,9 @@
 import asyncio
+import json
 from datetime import date, datetime, time, timedelta, timezone
 from http import HTTPStatus
 from re import search
+from textwrap import dedent
 
 from aiohttp import ClientSession
 from bs4 import BeautifulSoup
@@ -16,6 +18,16 @@ from config import (
 )
 
 TZ = timezone(timedelta(hours=8))
+
+
+class TeamMember(BaseModel):
+    realname: str
+    department: str
+    grade: str
+
+
+with open("users.json", "r") as format_message:
+    user_mappings = json.load(format_message)
 
 
 class UserPostStatus(BaseModel):
@@ -83,6 +95,10 @@ async def get_user_post_status(session: ClientSession, href: str) -> UserPostSta
         )
 
 
+async def send_line_message(session: ClientSession, message: str):
+    raise NotImplementedError
+
+
 async def send_discord_message(session: ClientSession, message: str):
     await session.post(
         URLEnum.WEBHOOK_URL,
@@ -91,7 +107,7 @@ async def send_discord_message(session: ClientSession, message: str):
     )
 
 
-async def get_today_not_posted_user(session: ClientSession):
+async def get_today_not_posted_user(session: ClientSession, all_user: bool = False):
     tasks = []
     async for member_post_url in get_member_post_url(session):
         tasks.append(get_user_post_status(session, member_post_url))
@@ -99,13 +115,29 @@ async def get_today_not_posted_user(session: ClientSession):
     user_post_statuses = await asyncio.gather(*tasks)
 
     for user_post_status in user_post_statuses:
-        if START_DATE + timedelta(days=user_post_status.post_count) != date.today():
+        if (
+            START_DATE + timedelta(days=user_post_status.post_count) != date.today()
+            or all_user
+        ):
             yield user_post_status
+
+
+def format_message(user: UserPostStatus):
+    # nickname, ID = search(r"(\w+) \((\w+)\)", user.username).groups()
+    nickname = search(r"(\w+) \((\w+)\)", user.username).group(1)
+    if nickname not in user_mappings:
+        return f"- **{nickname}** {user.title}"
+
+    department, grade, realname = user_mappings[nickname].values()
+    return f"- **{realname}({department} Team, {grade})**: {user.title}"
 
 
 async def main():
     async with ClientSession() as session:
         not_posted_users = [user async for user in get_today_not_posted_user(session)]
+
+        current_day = (date.today() - START_DATE).days
+        remain_day = (END_DATE - date.today()).days
         if not_posted_users:
             now = datetime.now(TZ)
 
@@ -117,17 +149,25 @@ async def main():
 
             await send_discord_message(
                 session,
-                f"# <@{DISCORD_ADMIN_ID}>今天還沒有發文的成員有**{len(not_posted_users)}**位: 距離截止時間還有{remain_time}",
+                dedent(
+                    f"""
+                # 第{current_day}天
+                <@{DISCORD_ADMIN_ID}>今天還沒有發文的成員有**{len(not_posted_users)}**位: 距離截止時間還有{remain_time}
+                """
+                ),
             )
-            message = "\n".join(
-                f"- **{user.username}** {user.title}" for user in not_posted_users
-            )
+            message = "\n".join(map(format_message, not_posted_users))
             await send_discord_message(session, message)
 
         else:
             await send_discord_message(
                 session,
-                f"<@{DISCORD_ADMIN_ID}> 今天所有成員都有發文了！目標是{TARGET_POST_COUNT}篇！",
+                dedent(
+                    f"""
+                # 第{current_day}天
+                <@{DISCORD_ADMIN_ID}> 今天所有成員都有發文了！目標是{TARGET_POST_COUNT}篇！(還剩下{remain_day}天)
+                """
+                ),
             )
 
 

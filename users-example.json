@@ -1,0 +1,7 @@
+{
+  "<nickname>": {
+    "realname": "<realname(str)>",
+    "department": "<department(str)>",
+    "grade": "<grade(str)>"
+  }
+}

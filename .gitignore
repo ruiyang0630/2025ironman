@@ -167,4 +167,4 @@ response.json
 *.code-workspace
 logs/**
 !logs/.gitkeep
-mygo.sqlite
+users.json
