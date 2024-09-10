@@ -151,17 +151,17 @@ async def main():
                 (datetime.min + remain_delta).time().strftime(" %H 小時 %M 分 %S 秒")
             )
 
-            message = "\n".join(user.message for user in not_posted_users)
             await send_discord_message(
                 session,
                 dedent(
                     f"""
                 # 第{current_day}天
                 ## <@{DISCORD_ADMIN_ID}>今天還沒有發文的成員有**{len(not_posted_users)}**位: 距離截止時間還有{remain_time}
-                {message}
                 """
                 ),
             )
+            for user in not_posted_users:
+                await send_discord_message(session, user.message)
 
         else:
             done_file_path = Path(f"done_{current_day}.txt")
