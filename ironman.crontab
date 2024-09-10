@@ -1,1 +1,2 @@
-*/5 20-23 * * * $HOME/ironman_reminder/start.sh
+*/12 20-23 * * * $HOME/ironman_reminder/start.sh
+0 * * * * $HOME/ironman_reminder/monitor.sh

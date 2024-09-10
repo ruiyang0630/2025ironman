@@ -39,16 +39,23 @@ class UserPostStatus(BaseModel):
 
     @computed_field
     @property
+    def realname(self) -> str:
+        nickname = search(r"(\w+) \((\w+)\)", self.username).group(1)
+        if nickname not in user_mappings:
+            return nickname
+
+        return user_mappings[nickname]["realname"]
+
+    @computed_field
+    @property
     def message(self) -> str:
         # nickname, ID = search(r"(\w+) \((\w+)\)", user.username).groups()
         nickname = search(r"(\w+) \((\w+)\)", self.username).group(1)
         if nickname not in user_mappings:
             return f"- **{nickname}** {self.title}"
 
-        department, grade, realname = user_mappings[nickname].values()
-        return (
-            f"- **{realname}({department} Team, {grade})**: [{self.title}]({self.url})"
-        )
+        department, grade, _ = user_mappings[nickname].values()
+        return f"- **{self.realname}({department} Team, {grade})**: [{self.title}]({self.url})"
 
 
 class SelectorEnum(StrEnum):
