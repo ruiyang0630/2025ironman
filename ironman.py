@@ -2,12 +2,13 @@ import asyncio
 import json
 from datetime import date, datetime, time, timedelta, timezone
 from http import HTTPStatus
+from pathlib import Path
 from re import search
 from textwrap import dedent
 
 from aiohttp import ClientSession
 from bs4 import BeautifulSoup
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from strenum import StrEnum
 
 from config import (
@@ -34,6 +35,20 @@ class UserPostStatus(BaseModel):
     username: str
     post_count: int
     title: str
+    url: str
+
+    @computed_field
+    @property
+    def message(self) -> str:
+        # nickname, ID = search(r"(\w+) \((\w+)\)", user.username).groups()
+        nickname = search(r"(\w+) \((\w+)\)", self.username).group(1)
+        if nickname not in user_mappings:
+            return f"- **{nickname}** {self.title}"
+
+        department, grade, realname = user_mappings[nickname].values()
+        return (
+            f"- **{realname}({department} Team, {grade})**: [{self.title}]({self.url})"
+        )
 
 
 class SelectorEnum(StrEnum):
@@ -92,6 +107,7 @@ async def get_user_post_status(session: ClientSession, href: str) -> UserPostSta
                 search(r"共 (\d+) 篇文章 ｜", post_count_element.text).group(1)
             ),
             title=post_soup.title.text.split(" ::")[0],
+            url=href,
         )
 
 
@@ -122,44 +138,37 @@ async def get_today_not_posted_user(session: ClientSession, all_user: bool = Fal
             yield user_post_status
 
 
-def format_message(user: UserPostStatus):
-    # nickname, ID = search(r"(\w+) \((\w+)\)", user.username).groups()
-    nickname = search(r"(\w+) \((\w+)\)", user.username).group(1)
-    if nickname not in user_mappings:
-        return f"- **{nickname}** {user.title}"
-
-    department, grade, realname = user_mappings[nickname].values()
-    return f"- **{realname}({department} Team, {grade})**: {user.title}"
-
-
 async def main():
     async with ClientSession() as session:
         not_posted_users = [user async for user in get_today_not_posted_user(session)]
-
-        current_day = (date.today() - START_DATE).days
-        remain_day = (END_DATE - date.today()).days
+        now = datetime.now(TZ)
+        current_day = (now.date() - START_DATE).days
+        remain_day = (END_DATE - now.date()).days
         if not_posted_users:
-            now = datetime.now(TZ)
-
             target_time = datetime.combine(now.date(), time(23, 59, 59), tzinfo=TZ)
             remain_delta = target_time - now
             remain_time = (
-                (datetime.min + remain_delta).time().strftime("%H 小時 %M 分 %S 秒")
+                (datetime.min + remain_delta).time().strftime(" %H 小時 %M 分 %S 秒")
             )
 
+            message = "\n".join(user.message for user in not_posted_users)
             await send_discord_message(
                 session,
                 dedent(
                     f"""
                 # 第{current_day}天
-                <@{DISCORD_ADMIN_ID}>今天還沒有發文的成員有**{len(not_posted_users)}**位: 距離截止時間還有{remain_time}
+                ## <@{DISCORD_ADMIN_ID}>今天還沒有發文的成員有**{len(not_posted_users)}**位: 距離截止時間還有{remain_time}
+                {message}
                 """
                 ),
             )
-            message = "\n".join(map(format_message, not_posted_users))
-            await send_discord_message(session, message)
 
         else:
+            done_file_path = Path(f"done_{current_day}.txt")
+            if done_file_path.exists() is True:
+                print("Already sent the message")
+                return
+
             await send_discord_message(
                 session,
                 dedent(
@@ -169,6 +178,9 @@ async def main():
                 """
                 ),
             )
+            # Create a done file to prevent sending the same message after all members have posted
+            with done_file_path.open("w", encoding="utf-8") as done_file:
+                done_file.write("done")
 
 
 # Run the main function
