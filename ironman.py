@@ -16,6 +16,7 @@ from config import (
     DISCORD_WEBHOOK_ID,
     DISCORD_WEBHOOK_TOKEN,
     ITHOME_IRONMAN_TEAM_ID,
+    LINE_NOTIFY_TOKEN,
 )
 
 TZ = timezone(timedelta(hours=8))
@@ -86,7 +87,10 @@ headers = {
 async def get_team_status(session: ClientSession):
     async with session.get(URLEnum.TEAM_URL, headers=headers) as resp:
         if resp.status != HTTPStatus.OK:
-            raise Exception(f"Failed to get team status: {resp.reason}")
+            error_message = await resp.text()
+            raise Exception(
+                f"Failed to get team status: {resp.reason}\n{error_message}"
+            )
 
         return await resp.text()
 
@@ -101,7 +105,10 @@ async def get_member_post_url(session: ClientSession):
 async def get_user_post_status(session: ClientSession, href: str) -> UserPostStatus:
     async with session.get(href, headers=headers) as user_posts_response:
         if user_posts_response.status != HTTPStatus.OK:
-            raise Exception(f"Failed to get user posts: {user_posts_response.reason}")
+            error_message = await user_posts_response.text()
+            raise Exception(
+                f"Failed to get user posts: {user_posts_response.reason}\n{error_message}"
+            )
 
         post_soup = BeautifulSoup(await user_posts_response.text(), "html.parser")
         post_count_element = post_soup.select_one(SelectorEnum.POST_COUNT_SELECTOR)
@@ -119,7 +126,12 @@ async def get_user_post_status(session: ClientSession, href: str) -> UserPostSta
 
 
 async def send_line_message(session: ClientSession, message: str):
-    raise NotImplementedError
+    # curl -H "Authorization: Bearer ${access_token}" -d "message=Line Notify test by vic" https://notify-api.line.me/api/notify
+    await session.post(
+        "https://notify-api.line.me/api/notify",
+        data={"message": message},
+        headers={"Authorization": f"Bearer {LINE_NOTIFY_TOKEN}"},
+    )
 
 
 async def send_discord_message(session: ClientSession, message: str):
@@ -137,12 +149,9 @@ async def get_today_not_posted_user(session: ClientSession, all_user: bool = Fal
 
     user_post_statuses = await asyncio.gather(*tasks)
 
-    for user_post_status in user_post_statuses:
-        if (
-            START_DATE + timedelta(days=user_post_status.post_count) != date.today()
-            or all_user
-        ):
-            yield user_post_status
+    for user in user_post_statuses:
+        if START_DATE + timedelta(days=user.post_count) != date.today() or all_user:
+            yield user
 
 
 async def main():
@@ -167,8 +176,18 @@ async def main():
                 """
                 ),
             )
+            await send_line_message(
+                session,
+                dedent(
+                    f"""
+                第{current_day}天
+                今天還沒有發文的成員有{len(not_posted_users)}位: 距離截止時間還有{remain_time}
+                """
+                ),
+            )
             for user in not_posted_users:
                 await send_discord_message(session, user.message)
+                await send_line_message(session, user.message)
 
         else:
             done_file_path = Path(f"done_{current_day}.txt")
@@ -182,6 +201,15 @@ async def main():
                     f"""
                 # 第{current_day}天
                 <@{DISCORD_ADMIN_ID}> 今天所有成員都有發文了！目標是{TARGET_POST_COUNT}篇！(還剩下{remain_day}天)
+                """
+                ),
+            )
+            await send_line_message(
+                session,
+                dedent(
+                    f"""
+                # 第{current_day}天
+                今天所有成員都有發文了！目標是{TARGET_POST_COUNT}篇！(還剩下{remain_day}天)
                 """
                 ),
             )
