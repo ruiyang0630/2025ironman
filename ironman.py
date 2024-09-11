@@ -16,7 +16,7 @@ from config import (
     DISCORD_WEBHOOK_ID,
     DISCORD_WEBHOOK_TOKEN,
     ITHOME_IRONMAN_TEAM_ID,
-    LINE_NOTIFY_TOKEN,
+    LINE_NOTIFY_TOKENS,
 )
 
 TZ = timezone(timedelta(hours=8))
@@ -126,12 +126,13 @@ async def get_user_post_status(session: ClientSession, href: str) -> UserPostSta
 
 
 async def send_line_message(session: ClientSession, message: str):
-    # curl -H "Authorization: Bearer ${access_token}" -d "message=Line Notify test by vic" https://notify-api.line.me/api/notify
-    await session.post(
-        "https://notify-api.line.me/api/notify",
-        data={"message": message},
-        headers={"Authorization": f"Bearer {LINE_NOTIFY_TOKEN}"},
-    )
+    # curl -H "Authorization: Bearer ${access_token}" -d "message=鐵人賽通知測試" https://notify-api.line.me/api/notify
+    for token in LINE_NOTIFY_TOKENS:
+        await session.post(
+            "https://notify-api.line.me/api/notify",
+            data={"message": message},
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
 
 async def send_discord_message(session: ClientSession, message: str):
