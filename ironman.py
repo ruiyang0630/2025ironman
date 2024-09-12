@@ -70,7 +70,7 @@ class URLEnum(StrEnum):
         f"https://ithelp.ithome.com.tw/2024ironman/signup/team/{ITHOME_IRONMAN_TEAM_ID}"
     )
     WEBHOOK_URL = (
-        f"https://discord.com/api/webhooks/{DISCORD_WEBHOOK_ID}/{DISCORD_WEBHOOK_TOKEN}"
+        "https://discord.com/api/webhooks/{DISCORD_WEBHOOK_ID}/{DISCORD_WEBHOOK_TOKEN}"
     )
 
 
@@ -136,11 +136,14 @@ async def send_line_message(session: ClientSession, message: str):
 
 
 async def send_discord_message(session: ClientSession, message: str):
-    await session.post(
-        URLEnum.WEBHOOK_URL,
-        json={"content": message, "username": "鐵人賽Bot"},
-        headers={"Content-Type": "application/json"},
-    )
+    for webhook_id, webhook_token in zip(DISCORD_WEBHOOK_ID, DISCORD_WEBHOOK_TOKEN):
+        await session.post(
+            URLEnum.WEBHOOK_URL.format(
+                DISCORD_WEBHOOK_ID=webhook_id, DISCORD_WEBHOOK_TOKEN=webhook_token
+            ),
+            json={"content": message, "username": "鐵人賽Bot"},
+            headers={"Content-Type": "application/json"},
+        )
 
 
 async def get_today_not_posted_user(session: ClientSession, all_user: bool = False):
