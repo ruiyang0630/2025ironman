@@ -61,7 +61,7 @@ class UserPostStatus(BaseModel):
 
 class SelectorEnum(StrEnum):
     HREF_SELECTOR = "body > section > div > div > div > div.col-md-10 > a"
-    POST_COUNT_SELECTOR = "body > div.container.index-top > div > div > div.board.leftside.profile-main > div.ir-profile-content > div.ir-profile-series > div.qa-list__info.qa-list__info--ironman.subscription-group > span:nth-child(2)"
+    POST_COUNT_SELECTOR = "body > div.container.index-top > div > div > div.board.leftside.profile-main > div.ir-profile-content > div.ir-profile-series > div.qa-list__info.qa-list__info--ironman.subscription-group > span:nth-child(1)"
     USERNAME_SELECTOR = "body > div.container.index-top > div > div > div:nth-child(1) > div.profile-header.clearfix > div.profile-header__content > div.profile-header__name"
 
 
@@ -118,7 +118,7 @@ async def get_user_post_status(session: ClientSession, href: str) -> UserPostSta
             .text.replace("\n", "")
             .strip(),
             post_count=int(
-                search(r"共 (\d+) 篇文章 ｜", post_count_element.text).group(1)
+                search(r"參賽天數 (\d+) 天", post_count_element.text).group(1)
             ),
             title=post_soup.title.text.split(" ::")[0],
             url=href,
