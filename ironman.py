@@ -12,11 +12,9 @@ from pydantic import BaseModel, computed_field
 from strenum import StrEnum
 
 from config import (
-    DISCORD_ADMIN_ID,
-    DISCORD_WEBHOOK_ID,
-    DISCORD_WEBHOOK_TOKEN,
     ITHOME_IRONMAN_TEAM_ID,
-    LINE_NOTIFY_TOKENS,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_CHAT_IDS
 )
 
 TZ = timezone(timedelta(hours=8))
@@ -28,7 +26,7 @@ class TeamMember(BaseModel):
     grade: str
 
 
-with open("users.json", "r") as format_message:
+with open("users.json", "r", encoding="utf-8") as format_message:
     user_mappings = json.load(format_message)
 
 
@@ -67,15 +65,12 @@ class SelectorEnum(StrEnum):
 
 class URLEnum(StrEnum):
     TEAM_URL = (
-        f"https://ithelp.ithome.com.tw/2024ironman/signup/team/{ITHOME_IRONMAN_TEAM_ID}"
-    )
-    WEBHOOK_URL = (
-        "https://discord.com/api/webhooks/{DISCORD_WEBHOOK_ID}/{DISCORD_WEBHOOK_TOKEN}"
+        f"https://ithelp.ithome.com.tw/2025ironman/signup/team/{ITHOME_IRONMAN_TEAM_ID}"
     )
 
 
-START_DATE = date(2024, 9, 8)
-END_DATE = date(2024, 10, 8)
+START_DATE = date(2025, 9, 14)
+END_DATE = date(2025, 10, 14)
 TARGET_POST_COUNT = 30
 
 headers = {
@@ -124,26 +119,16 @@ async def get_user_post_status(session: ClientSession, href: str) -> UserPostSta
             url=href,
         )
 
+async def send_telegram_message(session: ClientSession, message: str):
 
-async def send_line_message(session: ClientSession, message: str):
-    # curl -H "Authorization: Bearer ${access_token}" -d "message=鐵人賽通知測試" https://notify-api.line.me/api/notify
-    for token in LINE_NOTIFY_TOKENS:
-        await session.post(
-            "https://notify-api.line.me/api/notify",
-            data={"message": message},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-
-async def send_discord_message(session: ClientSession, message: str):
-    for webhook_id, webhook_token in zip(DISCORD_WEBHOOK_ID, DISCORD_WEBHOOK_TOKEN):
-        await session.post(
-            URLEnum.WEBHOOK_URL.format(
-                DISCORD_WEBHOOK_ID=webhook_id, DISCORD_WEBHOOK_TOKEN=webhook_token
-            ),
-            json={"content": message, "username": "鐵人賽Bot"},
+    for chat_id in TELEGRAM_CHAT_IDS:
+        resp = await session.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
             headers={"Content-Type": "application/json"},
         )
+        data = await resp.text()
+        print("Telegram response:", resp.status, data)
 
 
 async def get_today_not_posted_user(session: ClientSession, all_user: bool = False):
@@ -164,6 +149,7 @@ async def main():
         now = datetime.now(TZ)
         current_day = (now.date() - START_DATE).days
         remain_day = (END_DATE - now.date()).days
+
         if not_posted_users:
             target_time = datetime.combine(now.date(), time(23, 59, 59), tzinfo=TZ)
             remain_delta = target_time - now
@@ -171,27 +157,21 @@ async def main():
                 (datetime.min + remain_delta).time().strftime(" %H 小時 %M 分 %S 秒")
             )
 
-            await send_discord_message(
+            # 發送主通知
+            await send_telegram_message(
                 session,
                 dedent(
                     f"""
-                # 第{current_day}天
-                ## <@{DISCORD_ADMIN_ID}>今天還沒有發文的成員有**{len(not_posted_users)}**位: 距離截止時間還有{remain_time}
-                """
+                    📢 *第 {current_day} 天*
+                    今天還沒有發文的成員有 *{len(not_posted_users)}* 位  
+                    ⏳ 距離截止時間還有 {remain_time}
+                    """
                 ),
             )
-            await send_line_message(
-                session,
-                dedent(
-                    f"""
-                第{current_day}天
-                今天還沒有發文的成員有{len(not_posted_users)}位: 距離截止時間還有{remain_time}
-                """
-                ),
-            )
+
+            # 逐一發送還沒發文的成員
             for user in not_posted_users:
-                await send_discord_message(session, user.message)
-                await send_line_message(session, user.message)
+                await send_telegram_message(session, user.message)
 
         else:
             done_file_path = Path(f"done_{current_day}.txt")
@@ -199,25 +179,20 @@ async def main():
                 print("Already sent the message")
                 return
 
-            await send_discord_message(
+            # 全部完成的通知
+            await send_telegram_message(
                 session,
                 dedent(
                     f"""
-                # 第{current_day}天
-                <@{DISCORD_ADMIN_ID}> 今天所有成員都有發文了！目標是{TARGET_POST_COUNT}篇！(還剩下{remain_day}天)
-                """
+                    🎉 *第 {current_day} 天*
+                    今天所有成員都有發文了！  
+                    目標是 *{TARGET_POST_COUNT}* 篇！  
+                    (還剩下 {remain_day} 天)
+                    """
                 ),
             )
-            await send_line_message(
-                session,
-                dedent(
-                    f"""
-                # 第{current_day}天
-                今天所有成員都有發文了！目標是{TARGET_POST_COUNT}篇！(還剩下{remain_day}天)
-                """
-                ),
-            )
-            # Create a done file to prevent sending the same message after all members have posted
+
+            # 建立檔案避免重複通知
             with done_file_path.open("w", encoding="utf-8") as done_file:
                 done_file.write("done")
 
