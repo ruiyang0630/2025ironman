@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import date, datetime, time, timedelta, timezone
 from http import HTTPStatus
 from pathlib import Path
@@ -16,6 +17,13 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_IDS
 )
+
+# 設定 logging
+logging.basicConfig(
+    level=logging.INFO,  # 可改成 DEBUG 看到更詳細訊息
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 TZ = timezone(timedelta(hours=8))
 
@@ -48,7 +56,6 @@ class UserPostStatus(BaseModel):
     @computed_field
     @property
     def message(self) -> str:
-        # nickname, ID = search(r"(\w+) \((\w+)\)", user.username).groups()
         nickname = search(r"(\w+) \((\w+)\)", self.username).group(1)
         if nickname not in user_mappings:
             return f"- **{nickname}** {self.title}"
@@ -80,27 +87,34 @@ headers = {
 
 
 async def get_team_status(session: ClientSession):
+    logger.info("Fetching team status page...")
     async with session.get(URLEnum.TEAM_URL, headers=headers) as resp:
         if resp.status != HTTPStatus.OK:
             error_message = await resp.text()
+            logger.error(f"Failed to get team status: {resp.reason}")
             raise Exception(
                 f"Failed to get team status: {resp.reason}\n{error_message}"
             )
 
+        logger.info("Team status page fetched successfully")
         return await resp.text()
 
 
 async def get_member_post_url(session: ClientSession):
     team_status = await get_team_status(session)
     soup = BeautifulSoup(team_status, "html.parser")
-    for url in soup.select(SelectorEnum.HREF_SELECTOR):
-        yield url["href"]
+    urls = [url["href"] for url in soup.select(SelectorEnum.HREF_SELECTOR)]
+    logger.info(f"Found {len(urls)} member URLs")
+    for url in urls:
+        yield url
 
 
 async def get_user_post_status(session: ClientSession, href: str) -> UserPostStatus:
+    logger.debug(f"Fetching user post status from {href}")
     async with session.get(href, headers=headers) as user_posts_response:
         if user_posts_response.status != HTTPStatus.OK:
             error_message = await user_posts_response.text()
+            logger.error(f"Failed to get user posts: {user_posts_response.reason}")
             raise Exception(
                 f"Failed to get user posts: {user_posts_response.reason}\n{error_message}"
             )
@@ -108,7 +122,7 @@ async def get_user_post_status(session: ClientSession, href: str) -> UserPostSta
         post_soup = BeautifulSoup(await user_posts_response.text(), "html.parser")
         post_count_element = post_soup.select_one(SelectorEnum.POST_COUNT_SELECTOR)
 
-        return UserPostStatus(
+        user_status = UserPostStatus(
             username=post_soup.select_one(SelectorEnum.USERNAME_SELECTOR)
             .text.replace("\n", "")
             .strip(),
@@ -118,20 +132,27 @@ async def get_user_post_status(session: ClientSession, href: str) -> UserPostSta
             title=post_soup.title.text.split(" ::")[0],
             url=href,
         )
+        logger.debug(f"Fetched user: {user_status.username}, post_count={user_status.post_count}")
+        return user_status
+
 
 async def send_telegram_message(session: ClientSession, message: str):
-
     for chat_id in TELEGRAM_CHAT_IDS:
+        logger.info(f"Sending Telegram message to chat_id={chat_id}")
         resp = await session.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
             json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
             headers={"Content-Type": "application/json"},
         )
         data = await resp.text()
-        print("Telegram response:", resp.status, data)
+        if resp.status == 200:
+            logger.info(f"Telegram message sent successfully to {chat_id}")
+        else:
+            logger.error(f"Telegram send failed ({resp.status}): {data}")
 
 
 async def get_today_not_posted_user(session: ClientSession, all_user: bool = False):
+    logger.info("Checking today's not-posted users...")
     tasks = []
     async for member_post_url in get_member_post_url(session):
         tasks.append(get_user_post_status(session, member_post_url))
@@ -140,10 +161,14 @@ async def get_today_not_posted_user(session: ClientSession, all_user: bool = Fal
 
     for user in user_post_statuses:
         if START_DATE + timedelta(days=user.post_count) != date.today() or all_user:
+            logger.debug(f"User {user.realname} has NOT posted today")
             yield user
+        else:
+            logger.debug(f"User {user.realname} has posted today")
 
 
 async def main():
+    logger.info("=== Ironman Reminder Bot started ===")
     async with ClientSession() as session:
         not_posted_users = [user async for user in get_today_not_posted_user(session)]
         now = datetime.now(TZ)
@@ -151,13 +176,13 @@ async def main():
         remain_day = (END_DATE - now.date()).days
 
         if not_posted_users:
+            logger.warning(f"{len(not_posted_users)} users have not posted today")
             target_time = datetime.combine(now.date(), time(23, 59, 59), tzinfo=TZ)
             remain_delta = target_time - now
             remain_time = (
                 (datetime.min + remain_delta).time().strftime(" %H 小時 %M 分 %S 秒")
             )
 
-            # 發送主通知
             await send_telegram_message(
                 session,
                 dedent(
@@ -169,17 +194,16 @@ async def main():
                 ),
             )
 
-            # 逐一發送還沒發文的成員
             for user in not_posted_users:
                 await send_telegram_message(session, user.message)
 
         else:
             done_file_path = Path(f"done_{current_day}.txt")
             if done_file_path.exists() is True:
-                print("Already sent the message")
+                logger.info("Already sent completion message, skipping...")
                 return
 
-            # 全部完成的通知
+            logger.info("All users have posted today 🎉")
             await send_telegram_message(
                 session,
                 dedent(
@@ -192,9 +216,11 @@ async def main():
                 ),
             )
 
-            # 建立檔案避免重複通知
             with done_file_path.open("w", encoding="utf-8") as done_file:
                 done_file.write("done")
+            logger.info(f"Created marker file: {done_file_path}")
+
+    logger.info("=== Ironman Reminder Bot finished ===")
 
 
 # Run the main function
